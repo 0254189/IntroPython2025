@@ -2,88 +2,206 @@ import pygame
 import random
 import cv2
 import sys
+import math
 
 # === Configuración ===
 pygame.init()
-WIDTH, HEIGHT = 400, 600
+WIDTH, HEIGHT = 600, 600
 screen = pygame.display.set_mode((WIDTH, HEIGHT))
-pygame.display.set_caption("Face Jump 🪂")
+pygame.display.set_caption("Random Shape Jump 🎲")
 clock = pygame.time.Clock()
 
 # Jugador
 player_x = WIDTH // 2
 player_y = HEIGHT - 100
-player_width, player_height = 40, 40
+player_size = 40
 player_velocity_y = 0
 GRAVITY = 0.5
 JUMP_FORCE = -12
 BOOST_FORCE = -20
+SUPERBOOST_FORCE = -35
+player_shape = "circle"
+
+# Límites laterales
+border_margin = 60
+play_area_left = border_margin
+play_area_right = WIDTH - border_margin
 
 # Plataformas
 platforms = []
-PLATFORM_WIDTH = 60
+PLATFORM_WIDTH = 80
 PLATFORM_HEIGHT = 15
-NUM_PLATFORMS = 8
+NUM_PLATFORMS = 10
+PLATFORM_GAP = 100  # distancia fija entre todas las plataformas
+
+# Puntuación
+score = 0
+max_height_reached = 0
 
 # Colores
 WHITE = (255, 255, 255)
-GREEN = (50, 200, 50)
-BLUE = (50, 50, 200)
-RED = (200, 50, 50)
+GREEN = (50, 200, 50)    # normal
+BLUE = (50, 50, 200)     # booster
+ORANGE = (255, 140, 0)   # superbooster
+BLACK = (0, 0, 0)
+COLORS = [(200, 50, 50), (50, 200, 200), (200, 150, 50), (150, 50, 200)]
 
 # === OpenCV ===
 cap = cv2.VideoCapture(0)
 face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_frontalface_default.xml")
 
+# --- Funciones ---
+def pick_platform_type():
+    """Probabilidades: normal=80%, boost=15%, super=5%"""
+    r = random.random()
+    if r < 0.05:
+        return "super"
+    elif r < 0.20:
+        return "boost"
+    else:
+        return "normal"
+
 def init_platforms():
     global platforms
     platforms = []
-    step = HEIGHT // NUM_PLATFORMS
-    for i in range(NUM_PLATFORMS):
-        x = random.randint(50, WIDTH-50)
-        y = HEIGHT - i*step - 50
-        booster = random.random() < 0.2  # 20% chance booster
-        platforms.append([x, y, booster])
+    platforms.append([WIDTH//2 - PLATFORM_WIDTH//2, HEIGHT - 50, "normal"])
+    y = HEIGHT - 50
+    while len(platforms) < NUM_PLATFORMS:
+        y -= PLATFORM_GAP
+        x = random.randint(play_area_left + 20, play_area_right - PLATFORM_WIDTH - 20)
+        kind = pick_platform_type()
+        platforms.append([x, y, kind])
+
+def add_new_platform():
+    top_y = min([p[1] for p in platforms])
+    y = top_y - PLATFORM_GAP
+    x = random.randint(play_area_left + 20, play_area_right - PLATFORM_WIDTH - 20)
+    kind = pick_platform_type()
+    platforms.append([x, y, kind])
 
 def detect_face_controls(frame):
     global player_x
     gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
     faces = face_cascade.detectMultiScale(gray, 1.3, 5)
-
     for (x, y, w, h) in faces:
         cx = x + w//2
-        # Mapear al ancho del juego (espejo ON)
-        player_x = int((cx / frame.shape[1]) * WIDTH)
+        player_x = int(play_area_left + (cx / frame.shape[1]) * (play_area_right - play_area_left))
 
-def draw_game(frame):
-    # Fondo cámara
+def crop_and_resize(frame):
+    """Recortar la cámara para que sea cuadrada y escalar a 600x600"""
+    h, w = frame.shape[:2]
+    if w > h:  # ancho mayor que alto
+        start = (w - h) // 2
+        frame = frame[:, start:start+h]
+    else:  # alto mayor que ancho
+        start = (h - w) // 2
+        frame = frame[start:start+w, :]
+    frame = cv2.resize(frame, (WIDTH, HEIGHT))
+    return frame
+
+def draw_shape(shape, x, y, size, color):
+    if shape == "circle":
+        pygame.draw.circle(screen, color, (x, y), size//2)
+    elif shape == "triangle":
+        points = [(x, y-size//2), (x-size//2, y+size//2), (x+size//2, y+size//2)]
+        pygame.draw.polygon(screen, color, points)
+    elif shape == "hexagon":
+        points = [(x + size*math.cos(i*math.pi/3), y + size*math.sin(i*math.pi/3)) for i in range(6)]
+        pygame.draw.polygon(screen, color, points)
+    elif shape == "star":
+        points = []
+        for i in range(10):
+            r = size//2 if i % 2 == 0 else size//4
+            angle = i * (math.pi/5)
+            points.append((x + r*math.cos(angle), y + r*math.sin(angle)))
+        pygame.draw.polygon(screen, color, points)
+    elif shape == "heart":
+        pygame.draw.polygon(screen, color, [(x, y+size//3), (x-size//2, y), (x, y-size//2), (x+size//2, y)])
+        pygame.draw.circle(screen, color, (x-size//4, y-size//4), size//4)
+        pygame.draw.circle(screen, color, (x+size//4, y-size//4), size//4)
+
+def get_rank(score: int) -> str:
+    """Devuelve el rango de personaje según la puntuación en metros"""
+    if score < 50:
+        return "La Vacca Saturno Saturnita (Top 10)"
+    elif score < 100:
+        return "Trippi Troppi (Top 9)"
+    elif score < 150:
+        return "Lirilì Larilà (Top 8)"
+    elif score < 200:
+        return "Cappuccino Assassino (Top 7)"
+    elif score < 250:
+        return "Shimpanzinni Bananini (Top 6)"
+    elif score < 350:
+        return "Ballerina Cappuccina (Top 5)"
+    elif score < 450:
+        return "Brr Brr Patapim (Top 4)"
+    elif score < 550:
+        return "Bombardiro Crocodilo (Top 3)"
+    elif score < 650:
+        return "Tung Tung Tung Sahur (Top 2)"
+    else:
+        return "Tralalero Tralala (Top 1)"
+
+def draw_game(frame, game_over=False):
+    screen.fill(WHITE)
+
+    # Recortar y escalar cámara
+    frame = crop_and_resize(frame)
     frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-    frame_rgb = cv2.resize(frame_rgb, (WIDTH, HEIGHT))
     surf = pygame.surfarray.make_surface(frame_rgb.swapaxes(0, 1))
     screen.blit(surf, (0, 0))
 
+    # Bordes laterales
+    pygame.draw.rect(screen, BLACK, (0, 0, border_margin, HEIGHT))
+    pygame.draw.rect(screen, BLACK, (WIDTH-border_margin, 0, border_margin, HEIGHT))
+
     # Plataformas
     for plat in platforms:
-        color = BLUE if plat[2] else GREEN
+        kind = plat[2]
+        color = GREEN if kind == "normal" else BLUE if kind == "boost" else ORANGE
         pygame.draw.rect(screen, color, (plat[0], plat[1], PLATFORM_WIDTH, PLATFORM_HEIGHT))
 
     # Jugador
-    pygame.draw.rect(screen, RED, (player_x - player_width//2, player_y, player_width, player_height))
+    draw_shape(player_shape, player_x, player_y, player_size, random.choice(COLORS))
+
+    # Puntuación
+    font = pygame.font.SysFont("Arial", 24, bold=True)
+    score_text = font.render(f"{int(score)} m", True, BLACK, WHITE)
+    screen.blit(score_text, (WIDTH//2 - score_text.get_width()//2, 10))
+
+    # Menú Game Over
+    if game_over:
+        font_big = pygame.font.SysFont("Arial", 32, bold=True)
+        text1 = font_big.render("💀 Game Over", True, BLACK, WHITE)
+        text2 = font_big.render(f"Puntuación: {int(score)} m", True, BLACK, WHITE)
+        rank_text = font_big.render(get_rank(int(score)), True, BLACK, WHITE)
+        text3 = font_big.render("R = Reiniciar", True, BLACK, WHITE)
+        text4 = font_big.render("Q = Salir", True, BLACK, WHITE)
+
+        screen.blit(text1, text1.get_rect(center=(WIDTH//2, HEIGHT//2 - 80)))
+        screen.blit(text2, text2.get_rect(center=(WIDTH//2, HEIGHT//2 - 40)))
+        screen.blit(rank_text, rank_text.get_rect(center=(WIDTH//2, HEIGHT//2)))
+        screen.blit(text3, text3.get_rect(center=(WIDTH//2, HEIGHT//2 + 40)))
+        screen.blit(text4, text4.get_rect(center=(WIDTH//2, HEIGHT//2 + 80)))
 
     pygame.display.flip()
 
 def reset_game():
-    global player_x, player_y, player_velocity_y
+    global player_x, player_y, player_velocity_y, player_shape, score, max_height_reached
     player_x = WIDTH // 2
     player_y = HEIGHT - 100
     player_velocity_y = 0
+    player_shape = random.choice(["circle", "triangle", "hexagon", "star", "heart"])
+    score = 0
+    max_height_reached = HEIGHT
     init_platforms()
 
 # === Inicio ===
-init_platforms()
+reset_game()
+game_over = False
 
 # === Bucle principal ===
-game_over = False
 while True:
     for event in pygame.event.get():
         if event.type == pygame.QUIT:
@@ -105,39 +223,50 @@ while True:
     if not ret:
         break
 
-    frame = cv2.flip(frame, 1)  # espejo
+    frame = cv2.flip(frame, 1)
+
     if not game_over:
         detect_face_controls(frame)
+
+        # Limitar jugador
+        if player_x < play_area_left + player_size//2:
+            player_x = play_area_left + player_size//2
+        if player_x > play_area_right - player_size//2:
+            player_x = play_area_right - player_size//2
 
         # Gravedad
         player_velocity_y += GRAVITY
         player_y += player_velocity_y
 
-        # Colisiones con plataformas
-        player_rect = pygame.Rect(player_x - player_width//2, player_y, player_width, player_height)
+        # Colisiones
+        player_rect = pygame.Rect(player_x - player_size//2, player_y, player_size, player_size)
         for plat in platforms:
             plat_rect = pygame.Rect(plat[0], plat[1], PLATFORM_WIDTH, PLATFORM_HEIGHT)
             if player_rect.colliderect(plat_rect) and player_velocity_y > 0:
-                player_velocity_y = BOOST_FORCE if plat[2] else JUMP_FORCE
+                if plat[2] == "super":
+                    player_velocity_y = SUPERBOOST_FORCE
+                elif plat[2] == "boost":
+                    player_velocity_y = BOOST_FORCE
+                else:
+                    player_velocity_y = JUMP_FORCE
 
-        # Scroll: plataformas suben cuando jugador sube
+        # Scroll
         if player_y < HEIGHT//2:
             offset = HEIGHT//2 - player_y
             player_y = HEIGHT//2
             for plat in platforms:
                 plat[1] += offset
-            # Nuevas plataformas
             while len(platforms) < NUM_PLATFORMS:
-                x = random.randint(50, WIDTH-50)
-                y = random.randint(-50, 0)
-                booster = random.random() < 0.2
-                platforms.append([x, y, booster])
-            # Eliminar plataformas fuera
+                add_new_platform()
             platforms = [p for p in platforms if p[1] < HEIGHT]
 
-        # Game over si cae
+            # Puntuación
+            max_height_reached -= offset
+            score = (HEIGHT - max_height_reached) // 10
+
+        # Game Over
         if player_y > HEIGHT:
             game_over = True
 
-    draw_game(frame)
+    draw_game(frame, game_over)
     clock.tick(30)
